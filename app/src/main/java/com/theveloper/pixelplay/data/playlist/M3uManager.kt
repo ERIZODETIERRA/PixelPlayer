@@ -9,6 +9,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.first
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -22,43 +24,39 @@ class M3uManager @Inject constructor(
         val songIds = mutableListOf<String>()
         var playlistName = "Imported Playlist"
 
-        // Pre-load all songs once for efficient lookup (fixes performance issue with large M3U files)
+        // Pre-load all songs once for efficient lookup
         val allSongs = musicRepository.getAudioFiles().first()
-        
-        // Build lookup maps for fast matching
-        val songsByPath = allSongs.associateBy { it.path }
-        val songsByFileName = allSongs.groupBy { it.path.substringAfterLast("/") }
-        val songsByContentUriFileName = allSongs.groupBy { it.contentUriString.substringAfterLast("/") }
+
+        // Build normalized lookup maps for robust matching
+        val songsByNormalizedPath = allSongs.associateBy { normalizeM3uPath(it.path) }
+        val songsByFileName = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }
 
         context.contentResolver.openInputStream(uri)?.use { inputStream ->
             BufferedReader(InputStreamReader(inputStream)).use { reader ->
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     val trimmedLine = line?.trim() ?: continue
-                    if (trimmedLine.isEmpty() || trimmedLine.startsWith("#")) {
-                        // Handle metadata if needed, e.g., #EXTINF
+                    if (trimmedLine.isEmpty() || trimmedLine.startsWith("#")) continue
+
+                    val normalizedLine = normalizeM3uPath(trimmedLine)
+                    val directMatch = songsByNormalizedPath[normalizedLine]
+                    if (directMatch != null) {
+                        songIds.add(directMatch.id)
                         continue
                     }
-                    
-                    // trimmedLine is likely a file path or URI
-                    // We need to find a song in our database that matches this path
-                    
-                    // First try exact path match from pre-loaded map
-                    val songByPath = songsByPath[trimmedLine]
-                    if (songByPath != null) {
-                        songIds.add(songByPath.id)
-                    } else {
-                        // Try to match by filename if path doesn't match exactly
-                        val fileName = trimmedLine.substringAfterLast("/")
-                        val matchedSong = songsByFileName[fileName]?.firstOrNull()
-                            ?: songsByContentUriFileName[fileName]?.firstOrNull()
-                        if (matchedSong != null) {
-                            songIds.add(matchedSong.id)
-                        }
+
+                    // Fallback by filename only when unique to avoid wrong matches.
+                    val fileName = normalizedLine.substringAfterLast('/').lowercase()
+                    val candidates = songsByFileName[fileName].orEmpty()
+                    if (candidates.size == 1) {
+                        songIds.add(candidates.first().id)
                     }
                 }
             }
         }
+
+        // Deduplicate to avoid duplicate-key crashes in playlist UI.
+        val uniqueSongIds = songIds.distinct()
 
         // Try to get the filename as playlist name
         context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -68,7 +66,7 @@ class M3uManager @Inject constructor(
             }
         }
 
-        return Pair(playlistName, songIds)
+        return Pair(playlistName, uniqueSongIds)
     }
 
     fun generateM3u(playlist: Playlist, songs: List<Song>): String {
@@ -79,5 +77,13 @@ class M3uManager @Inject constructor(
             sb.append("${song.path}\n")
         }
         return sb.toString()
+    }
+
+    private fun normalizeM3uPath(raw: String): String {
+        val decoded = runCatching { URLDecoder.decode(raw, StandardCharsets.UTF_8.name()) }.getOrDefault(raw)
+        return decoded
+            .removePrefix("file://")
+            .replace('\\', '/')
+            .trim()
     }
 }

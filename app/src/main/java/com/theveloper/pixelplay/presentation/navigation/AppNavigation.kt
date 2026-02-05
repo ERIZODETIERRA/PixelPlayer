@@ -43,6 +43,7 @@ import com.theveloper.pixelplay.presentation.screens.EqualizerScreen
 import com.theveloper.pixelplay.presentation.viewmodel.PlayerViewModel
 import com.theveloper.pixelplay.presentation.viewmodel.PlaylistViewModel
 import kotlinx.coroutines.flow.first
+import timber.log.Timber
 import com.theveloper.pixelplay.presentation.components.ScreenWrapper
 
 @OptIn(UnstableApi::class)
@@ -59,9 +60,14 @@ fun AppNavigation(
     var startDestination by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
-        startDestination = userPreferencesRepository.launchTabFlow
-            .first()
-            .toRoute()
+        startDestination = runCatching {
+            userPreferencesRepository.launchTabFlow
+                .first()
+                .toRoute()
+        }.getOrElse { error ->
+            Timber.w(error, "Failed to resolve launch tab preference. Falling back to Home.")
+            LaunchTab.HOME.toRoute()
+        }
     }
 
     startDestination?.let { initialRoute ->

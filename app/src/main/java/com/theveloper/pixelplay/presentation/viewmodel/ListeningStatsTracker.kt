@@ -140,27 +140,14 @@ class ListeningStatsTracker @Inject constructor(
         if (session.isPlaying) {
             session.accumulatedListeningMs += (nowRealtime - session.lastRealtimeMs).coerceAtLeast(0L)
         }
-        val totalCap = if (session.totalDurationMs > 0) session.totalDurationMs else Long.MAX_VALUE
-        val listened = session.accumulatedListeningMs.coerceAtMost(totalCap).coerceAtLeast(0L)
+        val listened = session.accumulatedListeningMs.coerceAtLeast(0L)
         if (listened >= MIN_SESSION_LISTEN_MS) {
             val rawEndTimestamp = session.lastUpdateEpochMs.takeIf { it > 0L }
                 ?: (session.startedAtEpochMs + listened)
             val timestamp = rawEndTimestamp
                 .coerceAtLeast(session.startedAtEpochMs.coerceAtLeast(0L))
                 .coerceAtMost(System.currentTimeMillis())
-            val songId = session.songId
-            scope?.launch(Dispatchers.IO) {
-                dailyMixManager.recordPlay(
-                    songId = songId,
-                    songDurationMs = listened,
-                    timestamp = timestamp
-                )
-                playbackStatsRepository.recordPlayback(
-                    songId = songId,
-                    durationMs = listened,
-                    timestamp = timestamp
-                )
-            }
+            recordSessionPlayback(session = session, listenedMs = listened, sessionEndTimestamp = timestamp)
         }
         currentSession = null
         if (pendingVoluntarySongId == session.songId) {
@@ -175,6 +162,49 @@ class ListeningStatsTracker @Inject constructor(
     fun onCleared() {
         finalizeCurrentSession()
         scope = null
+    }
+
+    private fun recordSessionPlayback(
+        session: ActiveSession,
+        listenedMs: Long,
+        sessionEndTimestamp: Long
+    ) {
+        val scope = scope ?: return
+        val chunks = buildPlaybackChunks(session.totalDurationMs, listenedMs)
+        var cursorTimestamp = (sessionEndTimestamp - listenedMs).coerceAtLeast(0L)
+
+        scope.launch(Dispatchers.IO) {
+            chunks.forEach { chunkDuration ->
+                cursorTimestamp += chunkDuration
+                dailyMixManager.recordPlay(
+                    songId = session.songId,
+                    songDurationMs = chunkDuration,
+                    timestamp = cursorTimestamp
+                )
+                playbackStatsRepository.recordPlayback(
+                    songId = session.songId,
+                    durationMs = chunkDuration,
+                    timestamp = cursorTimestamp
+                )
+            }
+        }
+    }
+
+    private fun buildPlaybackChunks(trackDurationMs: Long, listenedMs: Long): List<Long> {
+        if (listenedMs < MIN_SESSION_LISTEN_MS) return emptyList()
+        if (trackDurationMs <= 0L) return listOf(listenedMs)
+
+        val chunks = mutableListOf<Long>()
+        val fullLoops = listenedMs / trackDurationMs
+        repeat(fullLoops.toInt()) {
+            chunks += trackDurationMs
+        }
+
+        val remainder = listenedMs % trackDurationMs
+        if (remainder >= MIN_SESSION_LISTEN_MS || chunks.isEmpty()) {
+            chunks += remainder.coerceAtLeast(MIN_SESSION_LISTEN_MS)
+        }
+        return chunks
     }
 
     companion object {
