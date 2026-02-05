@@ -751,11 +751,12 @@ constructor(
             coverShapeDetail4: Float? = null
     ): Playlist {
         val currentPlaylists = userPlaylistsFlow.first().toMutableList()
+        val sanitizedSongIds = songIds.distinct()
         val newPlaylist =
                 Playlist(
                         id = UUID.randomUUID().toString(),
                         name = name,
-                        songIds = songIds,
+                        songIds = sanitizedSongIds,
                         isAiGenerated = isAiGenerated,
                         isQueueGenerated = isQueueGenerated,
                         coverImageUri = coverImageUri,

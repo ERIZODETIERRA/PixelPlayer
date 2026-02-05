@@ -468,11 +468,16 @@ class PlaylistViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val (name, songIds) = m3uManager.parseM3u(uri)
-                if (songIds.isNotEmpty()) {
-                    userPreferencesRepository.createPlaylist(name, songIds)
+                val sanitizedName = name.ifBlank { "Imported Playlist" }
+                val uniqueSongIds = songIds.distinct()
+                if (uniqueSongIds.isNotEmpty()) {
+                    userPreferencesRepository.createPlaylist(sanitizedName, uniqueSongIds)
+                } else {
+                    sendToast("No matching songs were found in the playlist")
                 }
             } catch (e: Exception) {
                 Log.e("PlaylistViewModel", "Error importing M3U", e)
+                sendToast("Failed to import playlist")
             }
         }
     }
