@@ -878,7 +878,7 @@ fun PlaylistDetailScreen(
 
                 PlaylistBottomSheet(
                     playlistUiState = playlistUiState,
-                    song = currentSong,
+                    songs = listOf(currentSong),
                     onDismiss = {
                         showPlaylistBottomSheet = false
                     },

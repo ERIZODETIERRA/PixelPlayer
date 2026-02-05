@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -72,13 +73,16 @@ import androidx.compose.ui.util.lerp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavController
+import coil.size.Size
 import com.theveloper.pixelplay.R
 import com.theveloper.pixelplay.data.model.Album
+import com.theveloper.pixelplay.presentation.components.ExpressiveScrollBar
 import com.theveloper.pixelplay.presentation.components.MiniPlayerHeight
 import com.theveloper.pixelplay.presentation.components.NavBarContentHeight
 import com.theveloper.pixelplay.presentation.components.PlaylistBottomSheet
 import com.theveloper.pixelplay.presentation.components.SmartImage
 import com.theveloper.pixelplay.presentation.components.SongInfoBottomSheet
+import com.theveloper.pixelplay.presentation.components.subcomps.EnhancedSongListItem
 import com.theveloper.pixelplay.presentation.navigation.Screen
 import com.theveloper.pixelplay.presentation.viewmodel.AlbumDetailViewModel
 import com.theveloper.pixelplay.presentation.viewmodel.PlayerSheetState
@@ -118,6 +122,12 @@ fun AlbumDetailScreen(
     BackHandler(enabled = playerSheetState == PlayerSheetState.EXPANDED) {
         playerViewModel.collapsePlayerSheet()
     }
+
+    val isMiniPlayerVisible = stablePlayerState.currentSong != null
+    val fabBottomPadding by animateDpAsState(
+        targetValue = if (isMiniPlayerVisible) MiniPlayerHeight + 16.dp else 16.dp,
+        label = "fabPadding"
+    )
 
     when {
         uiState.isLoading && uiState.album == null -> {
@@ -233,18 +243,20 @@ fun AlbumDetailScreen(
                     state = lazyListState,
                     contentPadding = PaddingValues(
                         top = currentTopBarHeightDp,
-                        bottom = MiniPlayerHeight + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 8.dp
+                        start = 16.dp,
+                        end = if ((lazyListState.canScrollForward || lazyListState.canScrollBackward) && collapseFraction > 0.95f) 24.dp else 16.dp,
+                        bottom = fabBottomPadding + 80.dp // To account for FAB
                     ),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 16.dp)
                 ) {
                     items(songs, key = { song -> "album_song_${song.id}" }) { song ->
                         EnhancedSongListItem(
                             song = song,
                             isCurrentSong = stablePlayerState.currentSong?.id == song.id,
                             isPlaying = stablePlayerState.isPlaying,
+                            showAlbumArt = false,
                             onMoreOptionsClick = {
                                 playerViewModel.selectSongForInfo(song)
                                 showSongInfoBottomSheet = true
@@ -253,6 +265,19 @@ fun AlbumDetailScreen(
                         )
                     }
                 }
+
+                if (collapseFraction > 0.95f) {
+                    ExpressiveScrollBar(
+                        listState = lazyListState,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(
+                                top = currentTopBarHeightDp + 12.dp,
+                                bottom = fabBottomPadding + 80.dp
+                            )
+                    )
+                }
+
                 CollapsingAlbumTopBar(
                     album = album,
                     songsCount = songs.size,
@@ -334,7 +359,7 @@ fun AlbumDetailScreen(
 
                 PlaylistBottomSheet(
                     playlistUiState = playlistUiState,
-                    song = currentSong,
+                    songs = listOf(currentSong),
                     onDismiss = { showPlaylistBottomSheet = false },
                     bottomBarHeight = bottomBarHeightDp,
                     playerViewModel = playerViewModel
@@ -391,6 +416,7 @@ private fun CollapsingAlbumTopBar(
                 model = album.albumArtUriString,
                 contentDescription = "Cover of ${album.title}",
                 contentScale = ContentScale.Crop,
+                targetSize = Size(1600, 1600),
                 modifier = Modifier.fillMaxSize()
             )
             Box(

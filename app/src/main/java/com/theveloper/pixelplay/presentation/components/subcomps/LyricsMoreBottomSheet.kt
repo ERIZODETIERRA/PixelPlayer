@@ -38,6 +38,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import com.theveloper.pixelplay.R
 import com.theveloper.pixelplay.data.model.Lyrics
 import com.theveloper.pixelplay.presentation.components.LocalMaterialTheme
@@ -72,6 +76,7 @@ fun LyricsMoreBottomSheet(
     onTertiaryColor: Color = MaterialTheme.colorScheme.onTertiary
 ) {
     val navigationBarsPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    var showResetDialog by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
@@ -149,14 +154,42 @@ fun LyricsMoreBottomSheet(
                         .clip(resetShape)
                         .background(itemBackgroundColor)
                         .clickable {
-                            onDismissRequest()
-                            onResetImportedLyrics()
+                            showResetDialog = true
                         },
                     colors = ListItemDefaults.colors(
                         containerColor = Color.Transparent,
                         headlineColor = contentColor,
                         leadingIconColor = contentColor
                     )
+                )
+            }
+
+            if (showResetDialog) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { showResetDialog = false },
+                    title = { Text("Reset Lyrics?") },
+                    text = { Text("Are you sure you want to reset the lyrics for this song?") },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                showResetDialog = false
+                                onDismissRequest()
+                                onResetImportedLyrics()
+                            }
+                        ) {
+                            Text("Reset", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(
+                            onClick = { showResetDialog = false }
+                        ) {
+                            Text("Cancel")
+                        }
+                    },
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
                 )
             }
 
@@ -252,15 +285,7 @@ fun LyricsMoreBottomSheet(
                     isFavoriteProvider = isFavoriteProvider,
                     onShuffleToggle = onShuffleToggle,
                     onRepeatToggle = onRepeatToggle,
-                    onFavoriteToggle = onFavoriteToggle,
-//                    activeColorMain = accentColor,
-//                    activeColorSecondary = accentColor, // Reusing accent as secondary
-//                    activeColorTertiary = tertiaryColor,
-//                    onActiveColorMain = onAccentColor,
-//                    onActiveColorSecondary = onAccentColor,
-//                    onActiveColorTertiary = onTertiaryColor,
-//                    inactiveColor = contentColor.copy(alpha = 0.1f),
-                    //containerColor = Color.Transparent
+                    onFavoriteToggle = onFavoriteToggle
                 )
             }
         }

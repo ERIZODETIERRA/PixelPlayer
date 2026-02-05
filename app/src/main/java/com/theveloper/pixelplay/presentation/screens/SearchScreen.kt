@@ -103,6 +103,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import racra.compose.smooth_corner_rect_library.AbsoluteSmoothCornerShape
 import timber.log.Timber
+import com.theveloper.pixelplay.presentation.components.subcomps.EnhancedSongListItem
 
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -484,7 +485,7 @@ fun SearchScreen(
 
                 PlaylistBottomSheet(
                     playlistUiState = playlistUiState,
-                    song = currentSong,
+                    songs = listOf(currentSong),
                     onDismiss = { showPlaylistBottomSheet = false },
                     bottomBarHeight = bottomBarHeightDp,
                     playerViewModel = playerViewModel,

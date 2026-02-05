@@ -7,15 +7,17 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
@@ -35,6 +37,8 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -66,7 +70,13 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.theveloper.pixelplay.data.ai.SongMetadata
 import com.theveloper.pixelplay.data.media.CoverArtUpdate
 import com.theveloper.pixelplay.ui.theme.MontserratFamily
+import kotlinx.coroutines.launch
 import java.io.File
+
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.ui.graphics.TransformOrigin
+import com.theveloper.pixelplay.presentation.screens.TabAnimation
+import com.theveloper.pixelplay.ui.theme.GoogleSansRounded
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -131,6 +141,8 @@ fun SongInfoBottomSheet(
         cornerRadiusBL = favoriteButtonCornerRadius, smoothnessAsPercentTR = 60
     )
 
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 2 })
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     ModalBottomSheet(
         onDismissRequest = {
@@ -139,325 +151,402 @@ fun SongInfoBottomSheet(
             }
         },
         sheetState = sheetState,
-        //contentWindowInsets = { BottomSheetDefaults.windowInsets } // Manejo de insets como el teclado
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .animateContentSize(
+                    animationSpec = tween(durationMillis = 200),
+                    alignment = Alignment.BottomCenter
+                )
+                .fillMaxWidth(),
+            contentAlignment = Alignment.TopCenter
+        ) {
             Column(
                 modifier = Modifier
-                    .padding(horizontal = 16.dp)
-                    .verticalScroll(rememberScrollState()), // Permite scroll si el contenido es largo
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(0.dp)
+                    .fillMaxWidth()
+                    .animateContentSize(animationSpec = tween(durationMillis = 200))
             ) {
-                // Fila para la carátula del álbum y el título
-                Row(
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(80.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 16.dp)
                 ) {
-                    SmartImage(
-                        model = song.albumArtUriString,
-                        contentDescription = "Album Art",
-                        shape = albumArtShape,
-                        modifier = Modifier.size(80.dp),
-                        contentScale = ContentScale.Crop
-                    )
-                    Box(
+                    // Fila para la carátula del álbum y el título (Always visible)
+                    Row(
                         modifier = Modifier
-                            .weight(1f) // Ocupa el espacio restante
-                            .fillMaxHeight(), // Ocupa toda la altura de la fila
-                        contentAlignment = Alignment.CenterStart // Alinea el texto
+                            .fillMaxWidth()
+                            .height(80.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        AutoSizingTextToFill(
-                            modifier = Modifier.padding(end = 4.dp),
-                            //fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Light,
-                            text = song.title
+                        SmartImage(
+                            model = song.albumArtUriString,
+                            contentDescription = "Album Art",
+                            shape = albumArtShape,
+                            modifier = Modifier.size(80.dp),
+                            contentScale = ContentScale.Crop
                         )
-                    }
-                    FilledTonalIconButton(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .padding(vertical = 6.dp),
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceBright,
-                            contentColor = MaterialTheme.colorScheme.onSurface
-                        ),
-                        onClick = { showEditSheet = true },
-                    ) {
-                        Icon(
-                            modifier = Modifier.padding(horizontal = 8.dp),
-                            imageVector = Icons.Rounded.Edit,
-                            contentDescription = "Edit song metadata"
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Fila de botones de acción con altura intrínseca
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Min), // Asegura que todos los hijos puedan tener la misma altura
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    MediumExtendedFloatingActionButton(
-                        modifier = Modifier
-                            .weight(0.5f)
-                            .fillMaxHeight(), // Rellena a la altura de la Row
-                        onClick = onPlaySong,
-                        elevation = FloatingActionButtonDefaults.elevation(0.dp),
-                        shape = playButtonShape, // Usa tu forma personalizada
-                        icon = {
-                            Icon(Icons.Rounded.PlayArrow, contentDescription = "Play song")
-                        },
-                        text = {
-                            Text(
-                                modifier = Modifier.padding(end = 10.dp),
-                                text = "Play"
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            AutoSizingTextToFill(
+                                modifier = Modifier.padding(end = 4.dp),
+                                fontWeight = FontWeight.Light,
+                                text = song.title
                             )
                         }
-                    )
-
-                    // Botón de Favorito Modificado con animación y altura
-                    FilledIconButton(
-                        modifier = Modifier
-                            .weight(0.25f)
-                            .fillMaxHeight(), // Rellena a la altura de la Row
-                        onClick = onToggleFavorite,
-                        shape = favoriteButtonShape, // Forma animada
-                        colors = IconButtonDefaults.filledIconButtonColors( // Colores animados
-                            containerColor = favoriteButtonContainerColor,
-                            contentColor = favoriteButtonContentColor
-                        )
-                    ) {
-                        Icon(
-                            modifier = Modifier.size(FloatingActionButtonDefaults.LargeIconSize),
-                            imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                            contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites"
-                        )
+                        FilledTonalIconButton(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .padding(vertical = 6.dp),
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceBright,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            onClick = { showEditSheet = true },
+                        ) {
+                            Icon(
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                                imageVector = Icons.Rounded.Edit,
+                                contentDescription = "Edit song metadata"
+                            )
+                        }
                     }
 
-                    // Botón de Compartir Modificado con altura
-                    FilledTonalIconButton(
-                        modifier = Modifier
-                            .weight(0.25f)
-                            .fillMaxHeight(), // Rellena a la altura de la Row
-                        onClick = {
-                            try {
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "audio/*" // Tipo MIME para archivos de audio
-                                    putExtra(Intent.EXTRA_STREAM, song.contentUriString.toUri())
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) // Necesario para URIs de contenido
+
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Swipeable Content
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier
+                        .wrapContentHeight() // Allow sizing to content
+                        .fillMaxWidth(),
+                    verticalAlignment = Alignment.Top
+                ) { page ->
+                    when (page) {
+                        0 -> { // Options / Actions
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                item {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(IntrinsicSize.Min),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        MediumExtendedFloatingActionButton(
+                                            modifier = Modifier
+                                                .weight(0.5f)
+                                                .fillMaxHeight(),
+                                            onClick = onPlaySong,
+                                            elevation = FloatingActionButtonDefaults.elevation(0.dp),
+                                            shape = playButtonShape,
+                                            icon = {
+                                                Icon(Icons.Rounded.PlayArrow, contentDescription = "Play song")
+                                            },
+                                            text = {
+                                                Text(
+                                                    modifier = Modifier.padding(end = 10.dp),
+                                                    text = "Play"
+                                                )
+                                            }
+                                        )
+
+                                        FilledIconButton(
+                                            modifier = Modifier
+                                                .weight(0.25f)
+                                                .fillMaxHeight(),
+                                            onClick = onToggleFavorite,
+                                            shape = favoriteButtonShape,
+                                            colors = IconButtonDefaults.filledIconButtonColors(
+                                                containerColor = favoriteButtonContainerColor,
+                                                contentColor = favoriteButtonContentColor
+                                            )
+                                        ) {
+                                            Icon(
+                                                modifier = Modifier.size(FloatingActionButtonDefaults.LargeIconSize),
+                                                imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                                contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites"
+                                            )
+                                        }
+
+                                        FilledTonalIconButton(
+                                            modifier = Modifier
+                                                .weight(0.25f)
+                                                .fillMaxHeight(),
+                                            onClick = {
+                                                try {
+                                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                                        type = "audio/*"
+                                                        putExtra(Intent.EXTRA_STREAM, song.contentUriString.toUri())
+                                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                    }
+                                                    context.startActivity(Intent.createChooser(shareIntent, "Share Song File Via"))
+                                                } catch (e: Exception) {
+                                                    Toast.makeText(context, "Could not share song: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                                }
+                                            },
+                                            shape = CircleShape
+                                        ) {
+                                            Icon(
+                                                modifier = Modifier.size(FloatingActionButtonDefaults.LargeIconSize),
+                                                imageVector = Icons.Rounded.Share,
+                                                contentDescription = "Share song file"
+                                            )
+                                        }
+                                    }
                                 }
-                                // Inicia el chooser para que el usuario elija la app para compartir
-                                context.startActivity(Intent.createChooser(shareIntent, "Share Song File Via"))
-                            } catch (e: Exception) {
-                                // Manejar el caso donde la URI es inválida o no hay app para compartir
-                                Toast.makeText(context, "Could not share song: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                item {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(IntrinsicSize.Min),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        FilledTonalButton(
+                                            modifier = Modifier
+                                                .weight(0.6f)
+                                                .heightIn(min = 66.dp),
+                                            colors = ButtonDefaults.filledTonalButtonColors(
+                                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 0.dp),
+                                            shape = CircleShape,
+                                            onClick = onAddToQueue
+                                        ) {
+                                            Icon(
+                                                Icons.AutoMirrored.Rounded.QueueMusic,
+                                                contentDescription = "Add to Queue"
+                                            )
+                                            Spacer(Modifier.width(14.dp))
+                                            Text("Add to Queue")
+                                        }
+                                        FilledTonalButton(
+                                            modifier = Modifier
+                                                .weight(0.4f)
+                                                .heightIn(min = 66.dp),
+                                            colors = ButtonDefaults.filledTonalButtonColors(
+                                                containerColor = MaterialTheme.colorScheme.tertiary,
+                                                contentColor = MaterialTheme.colorScheme.onTertiary
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 0.dp),
+                                            shape = CircleShape,
+                                            onClick = onAddNextToQueue
+                                        ) {
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.QueueMusic,
+                                                contentDescription = "Play Next"
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("Next")
+                                        }
+                                    }
+                                }
+
+                                item {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(IntrinsicSize.Min),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        FilledTonalButton(
+                                            modifier = Modifier
+                                                .weight(0.5f)
+                                                .heightIn(min = 66.dp),
+                                            colors = ButtonDefaults.filledTonalButtonColors(
+                                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                            ),
+                                            shape = CircleShape,
+                                            onClick = onAddToPlayList
+                                        ) {
+                                            Icon(
+                                                Icons.AutoMirrored.Rounded.PlaylistAdd,
+                                                contentDescription = "Add to Playlist"
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("Playlist")
+                                        }
+
+                                        FilledTonalButton(
+                                            modifier = Modifier
+                                                .weight(0.5f)
+                                                .heightIn(min = 66.dp),
+                                            colors = ButtonDefaults.filledTonalButtonColors(
+                                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                            ),
+                                            shape = CircleShape,
+                                            onClick = {
+                                                (context as? Activity)?.let { activity ->
+                                                    onDeleteFromDevice(activity, song) { result ->
+                                                        if (result) {
+                                                            removeFromListTrigger()
+                                                            onDismiss()
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        ) {
+                                            Icon(
+                                                Icons.Default.DeleteForever,
+                                                contentDescription = "Delete"
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("Delete")
+                                        }
+                                    }
+                                }
+                                item {
+                                    Spacer(Modifier.height(80.dp))
+                                }
                             }
-                        },
-                        shape = CircleShape // Mantenemos CircleShape para el botón de compartir
-                    ) {
-                        Icon(
-                            modifier = Modifier.size(FloatingActionButtonDefaults.LargeIconSize),
-                            imageVector = Icons.Rounded.Share,
-                            contentDescription = "Share song file"
-                        )
-                    }
-                }
+                        }
+                        1 -> { // Details / Info
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                item {
+                                    ListItem(
+                                        modifier = Modifier.clip(shape = listItemShape),
+                                        headlineContent = { Text("Duration") },
+                                        supportingContent = { Text(formatDuration(song.duration)) },
+                                        leadingContent = { Icon(Icons.Rounded.Schedule, contentDescription = "Duration icon") }
+                                    )
+                                }
 
-            Spacer(modifier = Modifier.height(10.dp))
-            Column {
-                Row(
-                    modifier = Modifier
-                        //.weight(0.5f)
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Min), // Asegura que todos los hijos puedan tener la misma altura
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    // Botón de Añadir al Final de la Cola
-                    FilledTonalButton(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(0.4f)
-                            .heightIn(min = 66.dp), // Altura mínima recomendada para botones
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
-                        ),
-                        shape = CircleShape, // O considera RoundedCornerShape(16.dp)
-                        onClick = onAddToQueue
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Rounded.QueueMusic,
-                            contentDescription = "Add to Queue icon"
-                        )
-                        Spacer(Modifier.width(14.dp))
-                        Text("Add to Queue")
-                    }
-                    // Botón de Añadir Siguiente en la Cola
-                    FilledTonalButton(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(0.35f)
-                            .heightIn(min = 66.dp),
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = MaterialTheme.colorScheme.tertiary,
-                            contentColor = MaterialTheme.colorScheme.onTertiary
-                        ),
-                        shape = CircleShape,
-                        onClick = onAddNextToQueue
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.QueueMusic,
-                            contentDescription = "Add next in queue icon"
-                        )
-                        Spacer(Modifier.width(14.dp))
-                        Text("Play Next")
-                    }
-                }
+                                if (!song.genre.isNullOrEmpty()) {
+                                    item {
+                                        ListItem(
+                                            modifier = Modifier.clip(shape = listItemShape),
+                                            headlineContent = { Text("Genre") },
+                                            supportingContent = { Text(song.genre) },
+                                            leadingContent = { Icon(Icons.Rounded.MusicNote, contentDescription = "Genre icon") }
+                                        )
+                                    }
+                                }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                                item {
+                                    ListItem(
+                                        modifier = Modifier
+                                            .clip(shape = listItemShape)
+                                            .clickable(onClick = onNavigateToAlbum),
+                                        headlineContent = { Text("Album") },
+                                        supportingContent = { Text(song.album) },
+                                        leadingContent = { Icon(Icons.Rounded.Album, contentDescription = "Album icon") }
+                                    )
+                                }
 
-                FilledTonalButton(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        //.weight(0.5f)
-                        .heightIn(min = 66.dp), // Altura mínima recomendada para botones
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    ),
-                    shape = CircleShape, // O considera RoundedCornerShape(16.dp)
-                    onClick = onAddToPlayList
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.PlaylistAdd,
-                        contentDescription = "Add to Playlist icon"
-                    )
-                    Spacer(Modifier.width(14.dp))
-                    Text("Add to a Playlist")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            FilledTonalButton(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 66.dp),
-                colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer
-                ),
-                shape = CircleShape,
-                onClick = {
-                    (context as? Activity)?.let { activity ->
-                        onDeleteFromDevice(activity, song) { result ->
-                            if (result) {
-                                removeFromListTrigger()
-                                onDismiss()
+                                item {
+                                    ListItem(
+                                        modifier = Modifier
+                                            .clip(shape = listItemShape)
+                                            .clickable(onClick = onNavigateToArtist),
+                                        headlineContent = { Text("Artist") },
+                                        supportingContent = { Text(song.displayArtist) },
+                                        leadingContent = { Icon(Icons.Rounded.Person, contentDescription = "Artist icon") }
+                                    )
+                                }
+                                item {
+                                    ListItem(
+                                        modifier = Modifier
+                                            .clip(shape = listItemShape),
+                                        headlineContent = { Text("Path") },
+                                        supportingContent = { Text(song.path) },
+                                        leadingContent = { Icon(Icons.Rounded.AudioFile, contentDescription = "File icon") }
+                                    )
+                                }
+                                item {
+                                    Spacer(Modifier.height(80.dp))
+                                }
                             }
                         }
                     }
                 }
-            ) {
-                Icon(
-                    Icons.Default.DeleteForever,
-                    contentDescription = "Delete from device icon"
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("Delete From Device")
             }
 
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Sección de Detalles
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    ListItem(
-                        modifier = Modifier.clip(shape = listItemShape),
-                        headlineContent = { Text("Duration") },
-                        supportingContent = { Text(formatDuration(song.duration)) },
-                        leadingContent = { Icon(Icons.Rounded.Schedule, contentDescription = "Duration icon") }
-                    )
-
-                    if (!song.genre.isNullOrEmpty()) {
-                        ListItem(
-                            modifier = Modifier.clip(shape = listItemShape),
-                            headlineContent = { Text("Genre") },
-                            supportingContent = { Text(song.genre) }, // Safe call si es nullOrEmpty
-                            leadingContent = { Icon(Icons.Rounded.MusicNote, contentDescription = "Genre icon") }
-                        )
-                    }
-
-                    ListItem(
-                        modifier = Modifier
-                            .clip(shape = listItemShape)
-                            .clickable(onClick = onNavigateToAlbum),
-                        headlineContent = { Text("Album") },
-                        supportingContent = { Text(song.album) },
-                        leadingContent = { Icon(Icons.Rounded.Album, contentDescription = "Album icon") }
-                    )
-
-                    ListItem(
-                        modifier = Modifier
-                            .clip(shape = listItemShape)
-                            .clickable(onClick = onNavigateToArtist),
-                        headlineContent = { Text("Artist") },
-                        supportingContent = { Text(song.displayArtist) },
-                        leadingContent = { Icon(Icons.Rounded.Person, contentDescription = "Artist icon") }
-                    )
-                    ListItem(
-                        modifier = Modifier
-                            .clip(shape = listItemShape),
-                        headlineContent = { Text("Path") },
-                        supportingContent = { Text(song.path) },
-                        leadingContent = { Icon(Icons.Rounded.AudioFile, contentDescription = "File icon") }
-                    )
-                }
-                Spacer(modifier = Modifier.height(32.dp))
-            }
-
-            Box(
+            // Bottom Tab Bar
+            TabRow(
+                selectedTabIndex = pagerState.currentPage,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .height(30.dp)
-                    .background(
-                        brush = Brush.verticalGradient(
-                            listOf(
-                                Color.Transparent,
-                                MaterialTheme.colorScheme.surfaceContainerLow
-                            )
-                        )
-                    )
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .padding(5.dp),
+                containerColor = Color.Transparent,
+                divider = {},
+                indicator = {}
             ) {
-
-            }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(30.dp)
-                        .background(
-                            brush = Brush.verticalGradient(
-                                listOf(
-                                    Color.Transparent,
-                                    MaterialTheme.colorScheme.surfaceContainerLow
-                                )
-                            )
-                        )
+                 TabAnimation(
+                    index = 0,
+                    title = "Options",
+                    selectedIndex = pagerState.currentPage,
+                    onClick = {
+                        scope.launch {
+                            pagerState.animateScrollToPage(0)
+                        }
+                    },
+                    transformOrigin = TransformOrigin(0f, 0.5f)
                 ) {
-
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Rounded.Menu,
+                            contentDescription = "Options",
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "OPTIONS",
+                            fontFamily = GoogleSansRounded,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
+                
+                TabAnimation(
+                    index = 1,
+                    title = "Details",
+                    selectedIndex = pagerState.currentPage,
+                    onClick = {
+                        scope.launch {
+                            pagerState.animateScrollToPage(1)
+                        }
+                    },
+                    transformOrigin = TransformOrigin(1f, 0.5f)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Rounded.Info,
+                            contentDescription = "Details",
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "INFO",
+                            fontFamily = GoogleSansRounded,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
     }
 

@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -37,6 +38,7 @@ fun TabAnimation(
     title: String,
     selectedIndex: Int,
     onClick: () -> Unit,
+    transformOrigin: TransformOrigin = TransformOrigin.Center,
     content: @Composable () -> Unit
 ) {
     val hapticFeedback = LocalHapticFeedback.current
@@ -61,7 +63,7 @@ fun TabAnimation(
     LaunchedEffect(isSelected) {
         if (isSelected) {
             launch {
-                scale.animateTo(1.15f, animationSpec = animationSpec)
+                scale.animateTo(1.05f, animationSpec = animationSpec)
                 scale.animateTo(1f, animationSpec = animationSpec)
             }
         } else {
@@ -94,13 +96,11 @@ fun TabAnimation(
 
     Tab(
         modifier = modifier
-            .padding(
-                horizontal = 8.dp,
-                vertical = 12.dp
-            )
+            .padding(all = 5.dp)
             .graphicsLayer {
                 scaleX = scale.value
                 translationX = offsetX.value
+                this.transformOrigin = transformOrigin
             }
             .clip(CircleShape)
             .background(

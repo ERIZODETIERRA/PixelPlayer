@@ -499,7 +499,7 @@ fun GenreDetailScreen(
                 if (showPlaylistBottomSheet) {
                     com.theveloper.pixelplay.presentation.components.PlaylistBottomSheet(
                         playlistUiState = playlistUiState,
-                        song = song,
+                        songs = listOf(song),
                         onDismiss = { showPlaylistBottomSheet = false },
                         bottomBarHeight = 0.dp, // Or calculate if needed
                         playerViewModel = playerViewModel
