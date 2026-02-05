@@ -392,8 +392,11 @@ fun AboutScreen(
                 }
             }
 
-            item(key = authors[0].name) {
-                ContributorCard(authors[0])
+            val primaryAuthor = authors.firstOrNull()
+            if (primaryAuthor != null) {
+                item(key = primaryAuthor.name) {
+                    ContributorCard(primaryAuthor)
+                }
             }
 
             item(key = "author_contributor_spacer") {
