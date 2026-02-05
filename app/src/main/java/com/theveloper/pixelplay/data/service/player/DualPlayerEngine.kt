@@ -84,6 +84,13 @@ class DualPlayerEngine @Inject constructor(
 
     // Listener to attach to the active master player (playerA)
     private val masterPlayerListener = object : Player.Listener {
+        override fun onAudioSessionIdChanged(audioSessionId: Int) {
+            if (audioSessionId > 0 && _activeAudioSessionId.value != audioSessionId) {
+                Timber.tag("TransitionDebug").d("Master audio session changed: %d", audioSessionId)
+                _activeAudioSessionId.value = audioSessionId
+            }
+        }
+
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             if (playWhenReady) {
                 requestAudioFocus()
@@ -145,7 +152,10 @@ class DualPlayerEngine @Inject constructor(
         playerA.addListener(masterPlayerListener)
 
         // Initialize active session ID
-        _activeAudioSessionId.value = playerA.audioSessionId
+        val sessionId = playerA.audioSessionId
+        if (sessionId > 0) {
+            _activeAudioSessionId.value = sessionId
+        }
         
         isReleased = false
     }
@@ -400,7 +410,10 @@ class DualPlayerEngine @Inject constructor(
         onPlayerSwappedListeners.forEach { it(playerA) }
         
         // Update Session ID for Equalizer
-        _activeAudioSessionId.value = playerA.audioSessionId
+        val sessionId = playerA.audioSessionId
+        if (sessionId > 0) {
+            _activeAudioSessionId.value = sessionId
+        }
         
         Timber.tag("TransitionDebug").d("Players swapped EARLY. UI should now show next song.")
 
