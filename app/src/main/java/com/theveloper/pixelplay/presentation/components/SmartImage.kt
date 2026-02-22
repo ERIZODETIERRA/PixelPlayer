@@ -51,7 +51,7 @@ fun SmartImage(
     useDiskCache: Boolean = true,
     useMemoryCache: Boolean = true,
     allowHardware: Boolean = false,
-    targetSize: Size = Size(300, 300),
+    targetSize: Size = Size(600, 600),
     colorFilter: ColorFilter? = null,
     alpha: Float = 1f,
     onState: ((AsyncImagePainter.State) -> Unit)? = null

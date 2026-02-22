@@ -153,9 +153,9 @@ class MediaStoreSongRepository @Inject constructor(
                         path = path,
                         contentUriString = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString(),
                         albumArtUriString = ContentUris.withAppendedId(
-                            android.net.Uri.parse("content://media/external/audio/albumart"),
-                            albumId
-                        ).toString(),
+                            android.net.Uri.parse("content://media/external/audio/media"),
+                            id
+                        ).buildUpon().appendPath("albumart").build().toString(),
                         duration = cursor.getLong(durationCol),
                         genre = songIdToGenreMap[id],
                         lyrics = null,

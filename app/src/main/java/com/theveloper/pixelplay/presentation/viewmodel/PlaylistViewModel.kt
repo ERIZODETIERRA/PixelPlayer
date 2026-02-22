@@ -74,6 +74,15 @@ class PlaylistViewModel @Inject constructor(
     private val _playlistCreationEvent = MutableSharedFlow<Boolean>()
     val playlistCreationEvent: SharedFlow<Boolean> = _playlistCreationEvent.asSharedFlow()
 
+    private val _toastEvents = MutableSharedFlow<String>()
+    val toastEvents = _toastEvents.asSharedFlow()
+
+    fun sendToast(message: String) {
+        viewModelScope.launch {
+            _toastEvents.emit(message)
+        }
+    }
+
     companion object {
         private const val SONG_SELECTION_PAGE_SIZE =
             100 // Cargar 100 canciones a la vez para el selector
