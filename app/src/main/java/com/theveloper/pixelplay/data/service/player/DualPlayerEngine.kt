@@ -13,6 +13,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 //import androidx.media3.exoplayer.ffmpeg.FfmpegAudioRenderer
 import com.theveloper.pixelplay.data.model.TransitionSettings
+import com.theveloper.pixelplay.data.equalizer.EqualizerManager
 import com.theveloper.pixelplay.utils.envelope
 import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
@@ -37,6 +38,7 @@ import javax.inject.Singleton
 @Singleton
 class DualPlayerEngine @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val equalizerManager: EqualizerManager
 ) {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var transitionJob: Job? = null
@@ -137,10 +139,16 @@ class DualPlayerEngine @Inject constructor(
 
         // Clean up if needed (though unlikely to be called if already initialized and alive)
         if (::playerA.isInitialized) {
-            try { playerA.release() } catch (e: Exception) { /* Ignore */ }
+            try {
+                equalizerManager.detachFromAudioSession(playerA.audioSessionId)
+                playerA.release()
+            } catch (e: Exception) { /* Ignore */ }
         }
         if (::playerB.isInitialized) {
-            try { playerB.release() } catch (e: Exception) { /* Ignore */ }
+            try {
+                equalizerManager.detachFromAudioSession(playerB.audioSessionId)
+                playerB.release()
+            } catch (e: Exception) { /* Ignore */ }
         }
 
         // We initialize BOTH players with NO internal focus handling.
@@ -151,10 +159,17 @@ class DualPlayerEngine @Inject constructor(
         // Attach listener to initial master
         playerA.addListener(masterPlayerListener)
 
-        // Initialize active session ID
-        val sessionId = playerA.audioSessionId
-        if (sessionId > 0) {
-            _activeAudioSessionId.value = sessionId
+        // Initialize active sessions with Equalizer
+        scope.launch {
+            val idA = playerA.audioSessionId
+            val idB = playerB.audioSessionId
+            if (idA > 0) {
+                _activeAudioSessionId.value = idA
+                equalizerManager.attachToAudioSession(idA)
+            }
+            if (idB > 0) {
+                equalizerManager.attachToAudioSession(idB)
+            }
         }
         
         isReleased = false
@@ -220,6 +235,13 @@ class DualPlayerEngine @Inject constructor(
     fun prepareNext(mediaItem: MediaItem, startPositionMs: Long = 0L) {
         try {
             Timber.tag("TransitionDebug").d("Engine: prepareNext called for %s", mediaItem.mediaId)
+
+            // Ensure Player B's session is attached to Equalizer
+            val idB = playerB.audioSessionId
+            if (idB > 0) {
+                scope.launch { equalizerManager.attachToAudioSession(idB) }
+            }
+
             playerB.stop()
             playerB.clearMediaItems()
             playerB.playWhenReady = false
@@ -460,9 +482,18 @@ class DualPlayerEngine @Inject constructor(
         playerB.clearMediaItems()
 
         // Fresh Player Strategy: Release and recreate playerB to avoid OEM "stale session" tracking
+        val oldIdB = playerB.audioSessionId
+        equalizerManager.detachFromAudioSession(oldIdB)
         playerB.release()
         playerB = buildPlayer(handleAudioFocus = false)
-        Timber.tag("TransitionDebug").d("Old Player (B) released and recreated fresh.")
+
+        // Attach new Player B to Equalizer
+        val newIdB = playerB.audioSessionId
+        if (newIdB > 0) {
+            scope.launch { equalizerManager.attachToAudioSession(newIdB) }
+        }
+
+        Timber.tag("TransitionDebug").d("Old Player (B) released and recreated fresh. New session: $newIdB")
 
         // Ensure New Player (A) is fully active and unrestricted
         setPauseAtEndOfMediaItems(false)
@@ -473,8 +504,14 @@ class DualPlayerEngine @Inject constructor(
      */
     fun release() {
         transitionJob?.cancel()
-        if (::playerA.isInitialized) playerA.release()
-        if (::playerB.isInitialized) playerB.release()
+        if (::playerA.isInitialized) {
+            equalizerManager.detachFromAudioSession(playerA.audioSessionId)
+            playerA.release()
+        }
+        if (::playerB.isInitialized) {
+            equalizerManager.detachFromAudioSession(playerB.audioSessionId)
+            playerB.release()
+        }
         isReleased = true
     }
 }

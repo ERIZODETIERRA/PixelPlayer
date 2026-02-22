@@ -3,19 +3,20 @@ package com.theveloper.pixelplay.data.equalizer
 import android.media.audiofx.Equalizer
 import android.media.audiofx.BassBoost
 import android.media.audiofx.Virtualizer
+import android.media.audiofx.LoudnessEnhancer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Manages Android's built-in audio effects (Equalizer, BassBoost, Virtualizer).
- * Attaches to ExoPlayer's audio session ID for real-time audio processing.
+ * Manages Android's built-in audio effects (Equalizer, BassBoost, Virtualizer, LoudnessEnhancer).
+ * Supports multiple simultaneous audio sessions for seamless crossfade.
  * 
- * Thread-safe: All effect operations run on the main thread.
- * Crossfade compatible: Effects are attached to the audio session, not the player instance.
+ * Thread-safe: All effect operations run on the main thread or use thread-safe collections.
  */
 @Singleton
 class EqualizerManager @Inject constructor() {
@@ -27,10 +28,24 @@ class EqualizerManager @Inject constructor() {
         private const val MAX_LEVEL = 15
     }
     
-    private var equalizer: Equalizer? = null
-    private var bassBoost: BassBoost? = null
-    private var virtualizer: Virtualizer? = null
-    private var currentAudioSessionId: Int = 0
+    private data class SessionEffects(
+        val sessionId: Int,
+        val equalizer: Equalizer? = null,
+        val bassBoost: BassBoost? = null,
+        val virtualizer: Virtualizer? = null,
+        val loudnessEnhancer: LoudnessEnhancer? = null,
+        var minEqLevel: Short = -1500,
+        var maxEqLevel: Short = 1500
+    ) {
+        fun release() {
+            try { equalizer?.release() } catch (e: Exception) { Timber.tag(TAG).e(e, "Error releasing Equalizer") }
+            try { bassBoost?.release() } catch (e: Exception) { Timber.tag(TAG).e(e, "Error releasing BassBoost") }
+            try { virtualizer?.release() } catch (e: Exception) { Timber.tag(TAG).e(e, "Error releasing Virtualizer") }
+            try { loudnessEnhancer?.release() } catch (e: Exception) { Timber.tag(TAG).e(e, "Error releasing LoudnessEnhancer") }
+        }
+    }
+
+    private val activeSessions = ConcurrentHashMap<Int, SessionEffects>()
     
     // Normalized band levels (-15 to +15 for UI)
     private val _bandLevels = MutableStateFlow(List(NUM_BANDS) { 0 })
@@ -60,12 +75,6 @@ class EqualizerManager @Inject constructor() {
     private val _loudnessEnhancerStrength = MutableStateFlow(0)
     val loudnessEnhancerStrength: StateFlow<Int> = _loudnessEnhancerStrength.asStateFlow()
     
-    // Actual millibel range from the device's equalizer
-    private var minEqLevel: Short = -1500
-    private var maxEqLevel: Short = 1500
-
-    private var loudnessEnhancer: android.media.audiofx.LoudnessEnhancer? = null
-
     // Global device capabilities (Checking existence of effect UUIDs)
     private var isBassBoostSupportedGlobal = false
     private var isVirtualizerSupportedGlobal = false
@@ -82,122 +91,120 @@ class EqualizerManager @Inject constructor() {
             Timber.tag(TAG).d("Global Support Check - BassBoost: $isBassBoostSupportedGlobal, Virtualizer: $isVirtualizerSupportedGlobal")
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to query global audio effects")
-            // Fallback to assuming false until proven otherwise? Or true? 
-            // Better false to avoid broken UI, but unlikely to fail.
         }
     }
 
     /**
-     * Attaches the equalizer to an audio session ID.
-     * Call this when the player is created or swapped during crossfade.
-     */
-    /**
-     * Attaches the equalizer to an audio session ID.
-     * Call this when the player is created or swapped during crossfade.
+     * Attaches audio effects to an audio session ID.
      */
     suspend fun attachToAudioSession(audioSessionId: Int) {
-        if (audioSessionId == 0) {
-            Timber.tag(TAG).w("Invalid audio session ID: 0")
+        if (audioSessionId <= 0) {
+            Timber.tag(TAG).w("Invalid audio session ID: $audioSessionId")
             return
         }
         
-        if (currentAudioSessionId == audioSessionId && equalizer != null) {
+        if (activeSessions.containsKey(audioSessionId)) {
             Timber.tag(TAG).d("Already attached to session $audioSessionId")
             return
         }
         
         Timber.tag(TAG).d("Attaching to audio session: $audioSessionId")
-        release()
         
         try {
-            // Initialize Equalizer
-            equalizer = Equalizer(0, audioSessionId).apply {
-                minEqLevel = bandLevelRange[0]
-                maxEqLevel = bandLevelRange[1]
-                enabled = _isEnabled.value
+            val eq = try {
+                Equalizer(0, audioSessionId).apply {
+                    enabled = _isEnabled.value
+                }
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to initialize Equalizer for session $audioSessionId")
+                null
             }
-            
-            // Retry loop for effects that might fail initially
-            val maxRetries = 3
-            var retryCount = 0
-            
-            while (bassBoost == null && retryCount < maxRetries) {
+
+            val bb = if (isBassBoostSupportedGlobal) {
                 try {
-                    bassBoost = BassBoost(0, audioSessionId).apply {
+                    BassBoost(0, audioSessionId).apply {
                         enabled = _bassBoostEnabled.value
                         if (strengthSupported) {
                             setStrength(_bassBoostStrength.value.toShort())
                         }
                     }
-                    if (bassBoost != null) Timber.tag(TAG).d("BassBoost initialized on attempt ${retryCount + 1}")
                 } catch (e: Exception) {
-                    Timber.tag(TAG).w("BassBoost init failed (attempt ${retryCount + 1}): ${e.message}")
-                    if (retryCount < maxRetries - 1) kotlinx.coroutines.delay(300)
+                    Timber.tag(TAG).e(e, "Failed to initialize BassBoost for session $audioSessionId")
+                    null
                 }
-                retryCount++
-            }
-            if (bassBoost == null) Timber.tag(TAG).w("BassBoost gave up after $maxRetries attempts")
-            
-            retryCount = 0
-            while (virtualizer == null && retryCount < maxRetries) {
-                 try {
-                    virtualizer = Virtualizer(0, audioSessionId).apply {
+            } else null
+
+            val virt = if (isVirtualizerSupportedGlobal) {
+                try {
+                    Virtualizer(0, audioSessionId).apply {
                         enabled = _virtualizerEnabled.value
                         if (strengthSupported) {
                             setStrength(_virtualizerStrength.value.toShort())
                         }
                     }
-                    if (virtualizer != null) Timber.tag(TAG).d("Virtualizer initialized on attempt ${retryCount + 1}")
                 } catch (e: Exception) {
-                    Timber.tag(TAG).w("Virtualizer init failed (attempt ${retryCount + 1}): ${e.message}")
-                    if (retryCount < maxRetries - 1) kotlinx.coroutines.delay(300)
+                    Timber.tag(TAG).e(e, "Failed to initialize Virtualizer for session $audioSessionId")
+                    null
                 }
-                retryCount++
-            }
+            } else null
 
-            // Initialize Loudness Enhancer (usually robust, but let's be safe)
-            loudnessEnhancer = try {
-                android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
+            val le = try {
+                LoudnessEnhancer(audioSessionId).apply {
                     enabled = _loudnessEnhancerEnabled.value
                     setTargetGain(_loudnessEnhancerStrength.value)
                 }
             } catch (e: Exception) {
-                Timber.tag(TAG).w(e, "LoudnessEnhancer not supported on this device")
+                Timber.tag(TAG).w(e, "LoudnessEnhancer not supported for session $audioSessionId")
                 null
             }
+
+            val sessionEffects = SessionEffects(
+                sessionId = audioSessionId,
+                equalizer = eq,
+                bassBoost = bb,
+                virtualizer = virt,
+                loudnessEnhancer = le
+            )
             
-            currentAudioSessionId = audioSessionId
+            eq?.let {
+                sessionEffects.minEqLevel = it.bandLevelRange[0]
+                sessionEffects.maxEqLevel = it.bandLevelRange[1]
+                applyBandLevelsToSession(sessionEffects, _bandLevels.value)
+            }
             
-            // Apply current band levels with proper mapping
-            val deviceBandCount = equalizer?.numberOfBands?.toInt() ?: 0
-            Timber.tag(TAG).d("Device supports $deviceBandCount bands, UI has ${_bandLevels.value.size} bands")
-            applyBandLevels(_bandLevels.value)
-            
-            Timber.tag(TAG).d("Effects attached successfully. EQ bands: ${equalizer?.numberOfBands}, Range: $minEqLevel to $maxEqLevel")
+            activeSessions[audioSessionId] = sessionEffects
+            Timber.tag(TAG).d("Effects attached successfully to session $audioSessionId")
             
         } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to initialize audio effects")
-            release()
+            Timber.tag(TAG).e(e, "Fatal error attaching audio effects to session $audioSessionId")
         }
+    }
+
+    /**
+     * Detaches audio effects from an audio session ID.
+     */
+    fun detachFromAudioSession(audioSessionId: Int) {
+        Timber.tag(TAG).d("Detaching from audio session: $audioSessionId")
+        activeSessions.remove(audioSessionId)?.release()
     }
     
     /**
-     * Enables or disables the equalizer.
+     * Enables or disables the equalizer on all active sessions.
      */
     fun setEnabled(enabled: Boolean) {
         _isEnabled.value = enabled
-        try {
-            equalizer?.enabled = enabled
-            Timber.tag(TAG).d("Equalizer enabled: $enabled")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to set equalizer enabled state")
+        activeSessions.values.forEach { session ->
+            try {
+                session.equalizer?.enabled = enabled
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to set EQ enabled state for session ${session.sessionId}")
+            }
         }
+        Timber.tag(TAG).d("Equalizer enabled: $enabled")
     }
     
     /**
-     * Sets the level for a specific band.
-     * @param bandIndex 0-4 for the 5 bands
-     * @param level -15 to +15 normalized level
+     * Sets the level for a specific band on all active sessions.
      */
     fun setBandLevel(bandIndex: Int, level: Int) {
         if (bandIndex !in 0 until NUM_BANDS) return
@@ -207,113 +214,120 @@ class EqualizerManager @Inject constructor() {
         newLevels[bandIndex] = clampedLevel
         _bandLevels.value = newLevels
         
-        applyBandLevel(bandIndex, clampedLevel)
+        activeSessions.values.forEach { session ->
+            applyBandLevelsToSession(session, newLevels)
+        }
         
-        // Switch to custom preset when manually adjusting
         _currentPresetName.value = "custom"
     }
     
     /**
-     * Applies a preset to the equalizer.
+     * Applies a preset to the equalizer on all active sessions.
      */
     fun applyPreset(preset: EqualizerPreset) {
         _currentPresetName.value = preset.name
         _bandLevels.value = preset.bandLevels
-        applyBandLevels(preset.bandLevels)
+        activeSessions.values.forEach { session ->
+            applyBandLevelsToSession(session, preset.bandLevels)
+        }
         Timber.tag(TAG).d("Applied preset: ${preset.displayName}")
     }
 
     /**
-     * Sets bass boost enabled state.
+     * Sets bass boost enabled state on all active sessions.
      */
     fun setBassBoostEnabled(enabled: Boolean) {
         _bassBoostEnabled.value = enabled
-        try {
-            bassBoost?.enabled = enabled
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to set bass boost enabled")
+        activeSessions.values.forEach { session ->
+            try {
+                session.bassBoost?.enabled = enabled
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to set bass boost enabled for session ${session.sessionId}")
+            }
         }
     }
     
     /**
-     * Sets bass boost strength (0-1000).
+     * Sets bass boost strength (0-1000) on all active sessions.
      */
     fun setBassBoostStrength(strength: Int) {
         val clampedStrength = strength.coerceIn(0, 1000)
         _bassBoostStrength.value = clampedStrength
         
-        try {
-            bassBoost?.apply {
-                if (strengthSupported) {
-                    setStrength(clampedStrength.toShort())
+        activeSessions.values.forEach { session ->
+            try {
+                session.bassBoost?.apply {
+                    if (strengthSupported) {
+                        setStrength(clampedStrength.toShort())
+                    }
                 }
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to set bass boost strength for session ${session.sessionId}")
             }
-            Timber.tag(TAG).d("Bass boost strength: $clampedStrength")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to set bass boost")
         }
     }
 
     /**
-     * Sets virtualizer enabled state.
+     * Sets virtualizer enabled state on all active sessions.
      */
     fun setVirtualizerEnabled(enabled: Boolean) {
         _virtualizerEnabled.value = enabled
-        try {
-            virtualizer?.enabled = enabled
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to set virtualizer enabled")
+        activeSessions.values.forEach { session ->
+            try {
+                session.virtualizer?.enabled = enabled
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to set virtualizer enabled for session ${session.sessionId}")
+            }
         }
     }
     
     /**
-     * Sets virtualizer (surround) strength (0-1000).
+     * Sets virtualizer (surround) strength (0-1000) on all active sessions.
      */
     fun setVirtualizerStrength(strength: Int) {
         val clampedStrength = strength.coerceIn(0, 1000)
         _virtualizerStrength.value = clampedStrength
         
-        try {
-            virtualizer?.apply {
-                if (strengthSupported) {
-                    setStrength(clampedStrength.toShort())
+        activeSessions.values.forEach { session ->
+            try {
+                session.virtualizer?.apply {
+                    if (strengthSupported) {
+                        setStrength(clampedStrength.toShort())
+                    }
                 }
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to set virtualizer strength for session ${session.sessionId}")
             }
-            Timber.tag(TAG).d("Virtualizer strength: $clampedStrength")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to set virtualizer")
         }
     }
 
     /**
-     * Sets loudness enhancer enabled state.
+     * Sets loudness enhancer enabled state on all active sessions.
      */
     fun setLoudnessEnhancerEnabled(enabled: Boolean) {
         _loudnessEnhancerEnabled.value = enabled
-        try {
-            loudnessEnhancer?.enabled = enabled
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to set loudness enhancer enabled")
+        activeSessions.values.forEach { session ->
+            try {
+                session.loudnessEnhancer?.enabled = enabled
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to set loudness enhancer enabled for session ${session.sessionId}")
+            }
         }
     }
 
     /**
-     * Sets loudness enhancer strength (gain in mB).
-     * Typically 0 to 1000mB (10dB) is safe range, but API allows implies integers.
-     * We'll assume the UI passes a normalized 0-1000 range mapping to gain.
+     * Sets loudness enhancer strength (gain in mB) on all active sessions.
      */
     fun setLoudnessEnhancerStrength(strength: Int) {
-        val clampedStrength = strength.coerceIn(0, 3000) // Allow up to 3000mB? Let's check user request. Slider normal logic.
-        // User request doesn't specify limit. LoudnessEnhancer setTargetGain takes milliBels.
-        // Let's assume UI slider 0-1000 maps to 0-1000mB for simplicity.
-        // Actually, user asked for "loudness", usually LoudnessEnhancer.
+        val clampedStrength = strength.coerceIn(0, 3000)
         _loudnessEnhancerStrength.value = clampedStrength
 
-        try {
-            loudnessEnhancer?.setTargetGain(clampedStrength)
-            Timber.tag(TAG).d("Loudness enhancer strength: $clampedStrength")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to set loudness enhancer")
+        activeSessions.values.forEach { session ->
+            try {
+                session.loudnessEnhancer?.setTargetGain(clampedStrength)
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to set loudness enhancer strength for session ${session.sessionId}")
+            }
         }
     }
     
@@ -348,41 +362,49 @@ class EqualizerManager @Inject constructor() {
         _currentPresetName.value = preset.name
         _bandLevels.value = preset.bandLevels
         
-        // Apply if already attached
-        if (equalizer != null) {
-            equalizer?.enabled = enabled
-            applyBandLevels(preset.bandLevels)
-            setBassBoostStrength(bassBoostStrength)
-            setVirtualizerStrength(virtualizerStrength)
+        // Apply to all currently active sessions
+        activeSessions.values.forEach { session ->
+            try {
+                session.equalizer?.enabled = enabled
+                applyBandLevelsToSession(session, preset.bandLevels)
+
+                session.bassBoost?.apply {
+                    this.enabled = bassBoostEnabled
+                    if (strengthSupported) setStrength(bassBoostStrength.toShort())
+                }
+
+                session.virtualizer?.apply {
+                    this.enabled = virtualizerEnabled
+                    if (strengthSupported) setStrength(virtualizerStrength.toShort())
+                }
+
+                session.loudnessEnhancer?.apply {
+                    this.enabled = loudnessEnabled
+                    setTargetGain(loudnessStrength)
+                }
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Error restoring state for session ${session.sessionId}")
+            }
         }
     }
     
-    private fun applyBandLevels(levels: List<Int>) {
-        val eq = equalizer ?: return
+    private fun applyBandLevelsToSession(session: SessionEffects, levels: List<Int>) {
+        val eq = session.equalizer ?: return
         val deviceBandCount = eq.numberOfBands.toInt()
         
         if (deviceBandCount <= 0) return
         
-        // Map UI bands (10) to device bands (typically 5)
-        // If device has fewer bands than UI, we need to average/map appropriately
         val uiBandCount = levels.size
         
         if (deviceBandCount >= uiBandCount) {
-            // Device has same or more bands than UI - apply directly
             levels.forEachIndexed { index, level ->
-                applyBandLevelDirect(index, level)
+                applyBandLevelToSessionDirect(session, index, level)
             }
         } else {
-            // Device has fewer bands than UI - map UI bands to device bands
-            // Calculate how many UI bands map to each device band
             val ratio = uiBandCount.toFloat() / deviceBandCount.toFloat()
-            
             for (deviceBand in 0 until deviceBandCount) {
-                // Calculate which UI bands this device band covers
                 val startUiBand = (deviceBand * ratio).toInt()
                 val endUiBand = ((deviceBand + 1) * ratio).toInt().coerceAtMost(uiBandCount)
-                
-                // Average the UI band levels for this device band
                 var sum = 0
                 var count = 0
                 for (uiBand in startUiBand until endUiBand) {
@@ -391,45 +413,33 @@ class EqualizerManager @Inject constructor() {
                         count++
                     }
                 }
-                
                 val averageLevel = if (count > 0) sum / count else 0
-                applyBandLevelDirect(deviceBand, averageLevel)
+                applyBandLevelToSessionDirect(session, deviceBand, averageLevel)
             }
         }
     }
     
-    private fun applyBandLevelDirect(bandIndex: Int, normalizedLevel: Int) {
-        val eq = equalizer ?: return
+    private fun applyBandLevelToSessionDirect(session: SessionEffects, bandIndex: Int, normalizedLevel: Int) {
+        val eq = session.equalizer ?: return
         if (bandIndex >= eq.numberOfBands) return
         
-        // Convert normalized level (-15 to +15) to device millibel range
-        val range = maxEqLevel - minEqLevel
-        val millibelLevel = (minEqLevel + (normalizedLevel + 15) * range / 30).toShort()
+        val range = session.maxEqLevel - session.minEqLevel
+        val millibelLevel = (session.minEqLevel + (normalizedLevel + 15) * range / 30).toShort()
         
         try {
             eq.setBandLevel(bandIndex.toShort(), millibelLevel)
-            Timber.tag(TAG).v("Set band $bandIndex to $millibelLevel mB (normalized: $normalizedLevel)")
         } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to set band $bandIndex level")
-        }
-    }
-    
-    private fun applyBandLevel(bandIndex: Int, normalizedLevel: Int) {
-        // This now triggers a full reapply to ensure proper mapping
-        val currentLevels = _bandLevels.value.toMutableList()
-        if (bandIndex < currentLevels.size) {
-            currentLevels[bandIndex] = normalizedLevel.coerceIn(MIN_LEVEL, MAX_LEVEL)
-            applyBandLevels(currentLevels)
+            Timber.tag(TAG).e(e, "Failed to set band $bandIndex level for session ${session.sessionId}")
         }
     }
     
     /**
-     * Gets the center frequencies for all bands.
+     * Gets the center frequencies for the first active session or defaults.
      */
     fun getBandFrequencies(): List<Int> {
-        val eq = equalizer ?: return listOf(31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
+        val eq = activeSessions.values.firstOrNull()?.equalizer ?: return listOf(31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
         return (0 until eq.numberOfBands).map { band ->
-            eq.getCenterFreq(band.toShort()) / 1000 // Convert milliHz to Hz
+            eq.getCenterFreq(band.toShort()) / 1000
         }
     }
     
@@ -446,23 +456,14 @@ class EqualizerManager @Inject constructor() {
     /**
      * Checks if loudness enhancer is supported on this device.
      */
-    fun isLoudnessEnhancerSupported(): Boolean = loudnessEnhancer != null || android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT
+    fun isLoudnessEnhancerSupported(): Boolean = true // Usually supported via API
     
     /**
-     * Releases all audio effect resources.
+     * Releases all audio effect resources for all sessions.
      */
     fun release() {
-        try {
-            equalizer?.release()
-            bassBoost?.release()
-            virtualizer?.release()
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Error releasing audio effects")
-        }
-        equalizer = null
-        bassBoost = null
-        virtualizer = null
-        currentAudioSessionId = 0
-        Timber.tag(TAG).d("Audio effects released")
+        Timber.tag(TAG).d("Releasing all audio effects for all sessions")
+        activeSessions.values.forEach { it.release() }
+        activeSessions.clear()
     }
 }

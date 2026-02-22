@@ -15,6 +15,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 class MetadataEditStateHolder @Inject constructor(
@@ -127,7 +128,9 @@ class MetadataEditStateHolder @Inject constructor(
             // and assign it a NEW album ID, resulting in a NEW albumArtUri.
             // Using the 'updatedSong' copy above might retain a STALE albumArtUri.
             val freshSong = try {
-                musicRepository.getSong(song.id).first() ?: updatedSong
+                withTimeoutOrNull(5000) {
+                    musicRepository.getSong(song.id).first()
+                } ?: updatedSong
             } catch (e: Exception) {
                 updatedSong
             }

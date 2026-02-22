@@ -103,7 +103,11 @@ private fun renderDirectAlbumArt(
     modifier: Modifier
 ): Boolean {
     return when (model) {
-        is ImageRequest -> renderDirectAlbumArt(model.data, title, modifier)
+        is ImageRequest -> {
+            val data = model.data
+            if (data is ImageRequest) false // Prevent infinite recursion
+            else renderDirectAlbumArt(data, title, modifier)
+        }
         is ImageVector -> {
             Image(
                 imageVector = model,
